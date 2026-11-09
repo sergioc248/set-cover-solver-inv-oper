@@ -1,0 +1,46 @@
+[project]
+name = "set-cover"
+version = "0.1.0"
+description = "Solver reanudable de Gurobi para una instancia de set cover ponderado (ubicación de antenas)"
+readme = "README.md"
+authors = [
+    { name = "sergio", email = "scuadros248@unab.edu.co" },
+    { name = "danna", email = "dcarrillo882@unab.edu.co" },
+]
+requires-python = ">=3.13"
+dependencies = [
+    "gurobipy>=13.0.3",
+    "numpy>=2.5.4",
+    "scipy>=1.18.1",
+]
+
+[project.scripts]
+set-cover = "set_cover.cli:run"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "N", "PT"]
+ignore = ["PLR2004"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers"]
