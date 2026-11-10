@@ -1,0 +1,58 @@
+{
+  "stage": "final",
+  "seeds": [
+    9001,
+    9002,
+    9003,
+    9004,
+    9005,
+    9006,
+    9007,
+    9008,
+    9009,
+    9010,
+    9011,
+    9012,
+    9013,
+    9014,
+    9015,
+    9016,
+    9017,
+    9018,
+    9019,
+    9020,
+    9021,
+    9022,
+    9023,
+    9024,
+    9025,
+    9026,
+    9027,
+    9028,
+    9029,
+    9030
+  ],
+  "configs": [
+    {
+      "config_id": "8bcd910acdc6",
+      "config": {
+        "population_size": 100,
+        "crossover_rate": 0.8,
+        "mutation_rate": 0.03,
+        "mutation": "remove",
+        "tournament_size": 5,
+        "elite_count": 8,
+        "crossover": "uniform",
+        "greedy_fraction": 0.25,
+        "rcl_alpha": 0.3,
+        "random_activation": 0.02,
+        "prune_order": "random",
+        "deduplicate": true,
+        "stall_generations": 200,
+        "max_generations": null,
+        "max_evaluations": 100000,
+        "time_limit": null
+      }
+    }
+  ]
+}

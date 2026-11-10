@@ -1,0 +1,11 @@
+parameter,value,configs,runs,mean_cost,median_cost,best_cost,reached_best_rate,mean_seconds
+population_size,100,1,30,48645.9,48591.0,48538.0,0.033,9.538
+crossover_rate,0.8,1,30,48645.9,48591.0,48538.0,0.033,9.538
+mutation_rate,0.03,1,30,48645.9,48591.0,48538.0,0.033,9.538
+mutation,remove,1,30,48645.9,48591.0,48538.0,0.033,9.538
+tournament_size,5,1,30,48645.9,48591.0,48538.0,0.033,9.538
+elite_count,8,1,30,48645.9,48591.0,48538.0,0.033,9.538
+crossover,uniform,1,30,48645.9,48591.0,48538.0,0.033,9.538
+greedy_fraction,0.25,1,30,48645.9,48591.0,48538.0,0.033,9.538
+stall_generations,200,1,30,48645.9,48591.0,48538.0,0.033,9.538
+prune_order,random,1,30,48645.9,48591.0,48538.0,0.033,9.538

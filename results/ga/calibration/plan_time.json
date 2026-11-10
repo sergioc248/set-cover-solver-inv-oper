@@ -1,0 +1,80 @@
+{
+  "stage": "time",
+  "seeds": [
+    3001,
+    3002,
+    3003,
+    3004,
+    3005,
+    3006,
+    3007,
+    3008,
+    3009,
+    3010
+  ],
+  "configs": [
+    {
+      "config_id": "d31a8e2b3d59",
+      "config": {
+        "population_size": 100,
+        "crossover_rate": 0.8,
+        "mutation_rate": 0.03,
+        "mutation": "remove",
+        "tournament_size": 5,
+        "elite_count": 8,
+        "crossover": "uniform",
+        "greedy_fraction": 0.25,
+        "rcl_alpha": 0.3,
+        "random_activation": 0.02,
+        "prune_order": "random",
+        "deduplicate": true,
+        "stall_generations": null,
+        "max_generations": null,
+        "max_evaluations": null,
+        "time_limit": 60.0
+      }
+    },
+    {
+      "config_id": "5be72e211dcf",
+      "config": {
+        "population_size": 100,
+        "crossover_rate": 0.8,
+        "mutation_rate": 0.03,
+        "mutation": "remove",
+        "tournament_size": 5,
+        "elite_count": 5,
+        "crossover": "uniform",
+        "greedy_fraction": 0.25,
+        "rcl_alpha": 0.3,
+        "random_activation": 0.02,
+        "prune_order": "random",
+        "deduplicate": true,
+        "stall_generations": null,
+        "max_generations": null,
+        "max_evaluations": null,
+        "time_limit": 60.0
+      }
+    },
+    {
+      "config_id": "b8d576c1434b",
+      "config": {
+        "population_size": 100,
+        "crossover_rate": 0.7,
+        "mutation_rate": 0.03,
+        "mutation": "remove",
+        "tournament_size": 5,
+        "elite_count": 5,
+        "crossover": "uniform",
+        "greedy_fraction": 0.25,
+        "rcl_alpha": 0.3,
+        "random_activation": 0.02,
+        "prune_order": "random",
+        "deduplicate": true,
+        "stall_generations": null,
+        "max_generations": null,
+        "max_evaluations": null,
+        "time_limit": 60.0
+      }
+    }
+  ]
+}

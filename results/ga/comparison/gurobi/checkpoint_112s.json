@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "instance_fingerprint": "9c6929d996c62fb7cf800723d2ffd9539341b1b8a5a337a8d66cbe200c282293",
+  "incumbent": {
+    "antenna_ids": [
+      13,
+      19,
+      44,
+      63,
+      91,
+      94,
+      105,
+      166,
+      175,
+      277,
+      357,
+      366,
+      404,
+      412,
+      421,
+      432,
+      450,
+      453,
+      454,
+      475,
+      493,
+      497
+    ],
+    "cost": 50048.0
+  },
+  "best_bound": 32346.0,
+  "sessions": [
+    {
+      "started_at": "2026-11-10T00:14:37+00:00",
+      "ended_at": "2026-11-10T00:16:29+00:00",
+      "status": "time_limit",
+      "runtime_seconds": 112.00306606292725,
+      "nodes": 86385.0,
+      "target_gap": 0.0,
+      "best_bound": 32346.0,
+      "settings": {
+        "target_gap": "0.0",
+        "time_limit": "112.0",
+        "threads": "0",
+        "seed": "0",
+        "node_file_start_gb": "8.0"
+      }
+    }
+  ]
+}

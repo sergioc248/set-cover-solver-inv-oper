@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 set-cover = "set_cover.cli:run"
+set-cover-ga = "set_cover.ga.cli:run"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

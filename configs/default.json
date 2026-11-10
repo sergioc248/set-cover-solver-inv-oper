@@ -1,0 +1,17 @@
+{
+  "population_size": 100,
+  "crossover_rate": 0.8,
+  "mutation_rate": 0.005,
+  "tournament_size": 3,
+  "elite_count": 2,
+  "crossover": "uniform",
+  "greedy_fraction": 0.5,
+  "rcl_alpha": 0.3,
+  "random_activation": 0.02,
+  "prune_order": "cost_desc",
+  "deduplicate": true,
+  "stall_generations": 200,
+  "max_generations": 2000,
+  "max_evaluations": null,
+  "time_limit": null
+}

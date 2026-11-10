@@ -102,6 +102,32 @@ Estados de sesión:
 
 Los costos son enteros, así que el solver redondea las cotas probadas al entero superior. Esto es válido, y una brecha de 0 significa que la solución es óptima probada.
 
+## Algoritmo genético
+
+`set-cover-ga` resuelve la misma instancia con un algoritmo genético con reparación voraz y eliminación de redundancias. No usa Gurobi. La documentación de operadores, calibración y resultados está en [`docs/genetic_algorithm.md`](docs/genetic_algorithm.md).
+
+```bash
+# Una ejecución con la configuración por defecto o la calibrada
+uv run set-cover-ga run --seed 1
+uv run set-cover-ga run --config configs/calibrated.json --seed 1 --progress 50 \
+    --output results/ga/run.json --convergence results/ga/run_convergence.csv
+
+# Cualquier parámetro se puede sobrescribir; --no-limit desactiva un criterio de parada
+# Mutación: bit_flip, add, remove, swap o mixed
+uv run set-cover-ga run --population-size 200 --mutation remove --mutation-rate 0.03 \
+    --time-limit 30 --no-limit max_generations --no-limit stall_generations
+
+# Calibración completa (explore, refine, time, final); Ctrl+C y volver a ejecutar reanuda
+uv run set-cover-ga calibrate --workers 6
+uv run set-cover-ga calibrate --stage final
+
+# Comparación con el solver exacto (lee checkpoints; repetible con ETIQUETA=RUTA)
+uv run set-cover-ga compare --checkpoint "Gurobi 92.7 h=runs/default/checkpoint.json"
+
+# Mediciones de rendimiento de los operadores
+uv run set-cover-ga benchmark
+```
+
 ## Desarrollo
 
 ```bash

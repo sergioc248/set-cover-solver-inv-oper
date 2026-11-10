@@ -1,0 +1,4 @@
+rank,config_id,similar_to_best,runs,feasible_rate,median_cost,mean_cost,std_cost,best_cost,worst_cost,mean_seconds,mean_evaluations,mean_generations,median_evaluations_to_best,median_seconds_to_best,population_size,crossover_rate,mutation_rate,mutation,tournament_size,elite_count,crossover,greedy_fraction,stall_generations,prune_order
+1,b8d576c1434b,True,10,1.000,48591.0,48591.0,0.0,48591.0,48591.0,60.000,178461.8,1728.6,8849.0,3.003,100,0.7,0.03,remove,5,5,uniform,0.25,,random
+2,5be72e211dcf,True,10,1.000,48591.0,48591.0,0.0,48591.0,48591.0,60.000,179019.6,1739.2,6645.5,2.233,100,0.8,0.03,remove,5,5,uniform,0.25,,random
+3,d31a8e2b3d59,True,10,1.000,48591.0,48591.0,0.0,48591.0,48591.0,60.000,176818.7,1755.6,5590.5,1.964,100,0.8,0.03,remove,5,8,uniform,0.25,,random

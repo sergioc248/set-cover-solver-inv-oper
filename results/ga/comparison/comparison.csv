@@ -1,0 +1,6 @@
+method,cost,num_antennas,covered_customers,seconds,solver_best_bound,solver_gap_pct,proven_optimal,diff_vs_best_known_pct,gap_vs_optimum_pct,gap_upper_bound_pct,note
+GA (best of runs),48538.0,21,500,9.538,,,False,0.0,,24.856591639871382,best of 30 seeds; seconds = mean per run
+GA (median of runs),48591.0,,500,8.699,,,False,0.10919279739585479,,24.992926045016077,median of 30 seeds; every run is feasible
+Gurobi 4 s,52554.0,23,500,4.002,28183.0,46.373254176656395,False,8.273929704561375,,35.187138263665595,checkpoint results/ga/comparison/gurobi/checkpoint_4s.json
+Gurobi 112 s,50048.0,22,500,112.003,32346.0,35.37004475703325,False,3.110964605051712,,28.740836012861735,checkpoint results/ga/comparison/gurobi/checkpoint_112s.json
+Gurobi 92.7 h,49017.0,22,500,333821.76,38875.0,20.690780749535875,False,0.9868556594832915,,26.088745980707394,checkpoint results/ga/comparison/gurobi/checkpoint_92h.json

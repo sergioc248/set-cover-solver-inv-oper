@@ -1,0 +1,15 @@
+{
+  "evaluation_budget": 100000,
+  "explore_configs": 40,
+  "explore_seeds": 5,
+  "refine_top": 6,
+  "refine_neighbors": 4,
+  "refine_seeds": 15,
+  "time_budget_seconds": 60.0,
+  "time_top": 3,
+  "time_seeds": 10,
+  "final_seeds": 30,
+  "similarity_tolerance": 0.002,
+  "sampling_seed": 20261109,
+  "workers": 6
+}

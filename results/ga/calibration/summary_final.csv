@@ -1,0 +1,2 @@
+rank,config_id,similar_to_best,runs,feasible_rate,median_cost,mean_cost,std_cost,best_cost,worst_cost,mean_seconds,mean_evaluations,mean_generations,median_evaluations_to_best,median_seconds_to_best,population_size,crossover_rate,mutation_rate,mutation,tournament_size,elite_count,crossover,greedy_fraction,stall_generations,prune_order
+1,8bcd910acdc6,True,30,1.000,48591.0,48645.9,138.8,48538.0,49051.0,9.538,28437.7,280.6,5671.0,1.902,100,0.8,0.03,remove,5,8,uniform,0.25,200,random
