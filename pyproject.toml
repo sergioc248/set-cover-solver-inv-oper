@@ -11,12 +11,15 @@ requires-python = ">=3.13"
 dependencies = [
     "gurobipy>=13.0.3",
     "numpy>=2.5.4",
+    "plotly>=7.1.0",
     "scipy>=1.18.1",
+    "streamlit>=1.67.0",
 ]
 
 [project.scripts]
 set-cover = "set_cover.cli:run"
 set-cover-ga = "set_cover.ga.cli:run"
+set-cover-ui = "set_cover.ui.launcher:run"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]
@@ -45,3 +48,8 @@ files = ["src", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers"]
+
+[[tool.mypy.overrides]]
+# Plotly no publica tipos (sin py.typed ni stubs).
+module = ["plotly", "plotly.*"]
+ignore_missing_imports = true

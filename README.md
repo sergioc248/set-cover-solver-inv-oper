@@ -128,6 +128,25 @@ uv run set-cover-ga compare --checkpoint "Gurobi 92.7 h=runs/default/checkpoint.
 uv run set-cover-ga benchmark
 ```
 
+## Interfaz visual
+
+```bash
+uv run set-cover-ui        # abre http://localhost:8501; ejecútelo desde la raíz del proyecto
+uv run set-cover-ui --server.port 8600   # los argumentos extra pasan a Streamlit
+```
+
+Aplicación Streamlit con cinco páginas:
+
+| Página | Qué permite |
+|---|---|
+| Instancia | Modelo, tamaño, distribución de costos y de cobertura, matriz de cobertura |
+| Método exacto | Lanzar o reanudar una sesión de Gurobi (brecha, tiempo, hilos, semilla) y seguir en vivo la incumbente, la cota y la brecha; detenerla guardando el checkpoint; revisar las ejecuciones guardadas |
+| Algoritmo genético | Ejecutar el GA con cualquier configuración (operador de mutación incluido) y ver su convergencia en vivo; revisar la evaluación final de 30 semillas y las ejecuciones de 30 min |
+| Comparación | Tabla de métricas (la misma de `set-cover-ga compare`), costo por método, calidad vs tiempo, distribución del GA frente a Gurobi y antenas elegidas por cada método; descarga en CSV, JSON o Markdown |
+| Calibración | Resumen de las etapas, ranking por etapa, variabilidad de las mejores configuraciones, efecto de cada parámetro y configuración seleccionada |
+
+La interfaz lee los resultados de `results/` y los directorios de ejecución de `runs/`. Las sesiones de Gurobi lanzadas desde la interfaz quedan en `runs/<nombre>/` y aparecen en la comparación. Las ejecuciones del GA se guardan en la sesión del navegador y se pueden descargar en JSON. Cada ejecución de Gurobi guardada en `results/ga/comparison/gurobi/<nombre>/` tiene su `checkpoint.json` y su `trajectory.csv` (incumbente y cota en el tiempo, extraídas de `gurobi.log`).
+
 ## Desarrollo
 
 ```bash

@@ -341,7 +341,7 @@ Conclusión: con la mutación `remove`, más tiempo sí ayuda, pero con rendimie
 
 ## Comparación con el solver exacto
 
-`uv run set-cover-ga compare` verifica cada solución contra la matriz original (cobertura y costo) y escribe `results/ga/comparison/comparison.{json,csv,md}`. Las sesiones cortas de Gurobi se ejecutaron con el solver existente (`set-cover solve --gap 0 --time-limit 4` y `--time-limit 112`); sus checkpoints están en `results/ga/comparison/gurobi/`. Gurobi usa 12 hilos; cada ejecución del GA usa uno.
+`uv run set-cover-ga compare` verifica cada solución contra la matriz original (cobertura y costo) y escribe `results/ga/comparison/comparison.{json,csv,md}`. Las sesiones cortas de Gurobi se ejecutaron con el solver existente (`set-cover solve --gap 0 --time-limit 4` y `--time-limit 112`); sus checkpoints y trayectorias (`checkpoint.json`, `trajectory.csv`) están en `results/ga/comparison/gurobi/<4s|112s|92h>/`. La interfaz (`uv run set-cover-ui`, página Comparación) muestra la misma tabla con gráficos de costo, calidad vs tiempo y antenas elegidas. Gurobi usa 12 hilos; cada ejecución del GA usa uno.
 
 | Método | Costo | Antenas | Clientes | Tiempo | Cota inferior | Brecha del solver | Dif. vs mejor conocida | Cota sup. de la brecha |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
