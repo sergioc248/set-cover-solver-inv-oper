@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from set_cover.ga.jsonio import (
     int_list_field,
     read_json_lines,
     str_field,
+    to_mapping,
 )
 from set_cover.instance import Instance
 from set_cover.run import checkpoint_path, is_locked
@@ -199,41 +201,99 @@ def read_ga_records(path: Path) -> list[GARunRecord]:
     return records
 
 
-def ga_record_result(
-    instance: Instance, records: Sequence[GARunRecord], method: str
-) -> MethodResult:
-    """Mejor ejecución de un grupo de registros, como fila de comparación."""
-    if not records:
-        raise RecordError(f"{method}: no runs")
-    best = min(records, key=lambda record: (record.cost, record.seed))
-    _require_feasible(instance, best.antenna_ids, method)
-    return MethodResult(
-        method=method,
-        cost=best.cost,
-        antenna_ids=best.antenna_ids,
-        covered_customers=instance.num_customers,
-        seconds=best.seconds,
-        best_bound=None,
-        solver_gap=None,
-        proven_optimal=False,
-        note=f"mejor de {len(records)} ejecuciones (semilla {best.seed}); tiempo de esa ejecución",
-    )
-
-
-def ga_session_result(instance: Instance, result: GAResult, method: str) -> MethodResult:
-    ids = list(result.evaluation.antenna_ids)
-    _require_feasible(instance, ids, method)
-    return MethodResult(
-        method=method,
+def record_from_result(result: GAResult) -> GARunRecord:
+    return GARunRecord(
+        seed=result.seed,
+        config_id=result.config.config_id(),
         cost=result.evaluation.cost,
-        antenna_ids=ids,
-        covered_customers=instance.num_customers,
+        num_antennas=result.evaluation.num_antennas,
+        antenna_ids=list(result.evaluation.antenna_ids),
         seconds=result.elapsed_seconds,
-        best_bound=None,
-        solver_gap=None,
-        proven_optimal=False,
-        note=f"semilla {result.seed}, configuración {result.config.config_id()}",
+        evaluations=result.evaluations,
+        generations=result.generations,
+        seconds_to_best=result.seconds_to_best,
+        stop_reason=result.stop_reason.value,
     )
+
+
+@dataclass(frozen=True)
+class GAGroup:
+    """Ejecuciones del GA que se resumen juntas: un lote de semillas con una configuración."""
+
+    label: str
+    records: tuple[GARunRecord, ...]
+    curves: tuple["Curve", ...]
+
+    def __post_init__(self) -> None:
+        if not self.records:
+            raise RecordError(f"{self.label}: no runs")
+
+    @property
+    def costs(self) -> list[float]:
+        return [record.cost for record in self.records]
+
+    @property
+    def best(self) -> GARunRecord:
+        return min(self.records, key=lambda record: (record.cost, record.seed))
+
+    @property
+    def median_cost(self) -> float:
+        return statistics.median(self.costs)
+
+    @property
+    def std_cost(self) -> float:
+        return statistics.stdev(self.costs) if len(self.records) > 1 else 0.0
+
+    @property
+    def mean_seconds(self) -> float:
+        return statistics.fmean(record.seconds for record in self.records)
+
+
+def result_group(label: str, results: Sequence[GAResult]) -> GAGroup:
+    return GAGroup(
+        label,
+        tuple(record_from_result(result) for result in results),
+        tuple(history_curve(result.history, f"semilla {result.seed}") for result in results),
+    )
+
+
+def group_results(instance: Instance, group: GAGroup) -> list[MethodResult]:
+    """Filas de comparación de un grupo: su mejor ejecución y, si hay varias, la mediana.
+
+    Toda ejecución se verifica contra la matriz: la mediana solo es válida si todas cubren.
+    """
+    for record in group.records:
+        _require_feasible(instance, record.antenna_ids, group.label)
+    best = group.best
+    runs = len(group.records)
+    rows = [
+        MethodResult(
+            method=f"{group.label} · mejor" if runs > 1 else group.label,
+            cost=best.cost,
+            antenna_ids=best.antenna_ids,
+            covered_customers=instance.num_customers,
+            seconds=best.seconds,
+            best_bound=None,
+            solver_gap=None,
+            proven_optimal=False,
+            note=f"mejor de {runs} (semilla {best.seed}); tiempo de esa ejecución",
+        )
+    ]
+    if runs > 1:
+        rows.append(
+            MethodResult(
+                method=f"{group.label} · mediana",
+                cost=group.median_cost,
+                antenna_ids=[],
+                covered_customers=instance.num_customers,
+                seconds=statistics.median(record.seconds for record in group.records),
+                best_bound=None,
+                solver_gap=None,
+                proven_optimal=False,
+                note=f"mediana de {runs} ejecuciones; todas cubren a los clientes",
+            )
+        )
+    return rows
 
 
 def _require_feasible(instance: Instance, antenna_ids: list[int], method: str) -> None:
@@ -260,6 +320,23 @@ def read_convergence(path: Path) -> list[Curve]:
         seconds.setdefault(seed, []).append(float(row["elapsed_seconds"]))
         best.setdefault(seed, []).append(float(row["best_so_far"]))
     return [Curve(f"semilla {seed}", seconds[seed], best[seed]) for seed in seconds]
+
+
+def extend_to_run_end(curves: Sequence[Curve], records: Sequence[GARunRecord]) -> list[Curve]:
+    """Prolonga cada curva hasta el final de su ejecución.
+
+    Un registro de mejoras termina en la última mejora; sin este punto, una ejecución de
+    30 minutos que dejó de mejorar a los 850 s parecería haber durado 850 s.
+    """
+    ends = {f"semilla {record.seed}": record.seconds for record in records}
+    extended: list[Curve] = []
+    for curve in curves:
+        end = ends.get(curve.label)
+        if end is None or not curve.seconds or end <= curve.seconds[-1]:
+            extended.append(curve)
+            continue
+        extended.append(Curve(curve.label, [*curve.seconds, end], [*curve.best, curve.best[-1]]))
+    return extended
 
 
 def history_curve(history: History, label: str) -> Curve:
@@ -324,11 +401,84 @@ def jaccard(first: Sequence[int], second: Sequence[int]) -> float:
     return 1.0 if not union else len(set(first) & set(second)) / len(union)
 
 
+MISSING = "—"
+
+
+def spanish(value: float, decimals: int | None = 0) -> str:
+    """Número con punto de miles y coma decimal: ``48.666,8``.
+
+    ``decimals=None`` usa los decimales necesarios, hasta 6: ``0,03``.
+    """
+    places = 6 if decimals is None else decimals
+    text = f"{value:,.{places}f}"
+    if decimals is None and "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def percent(fraction: float, decimals: int = 2) -> str:
+    return f"{spanish(100 * fraction, decimals)} %"
+
+
+def display_rows(
+    rows: Sequence[Mapping[str, object]], decimals: Mapping[str, int | None]
+) -> tuple[list[dict[str, str]], list[str]]:
+    """Filas con los números como texto en formato español y ``—`` donde falta el valor.
+
+    Retorna las filas y las columnas numéricas. Los enteros nunca llevan decimales; los
+    reales usan ``decimals`` de su columna, o 2 si no figura.
+    """
+    numeric: dict[str, None] = {}
+    formatted: list[dict[str, str]] = []
+    for row in rows:
+        cells: dict[str, str] = {}
+        for column, value in row.items():
+            if value is None:
+                cells[column] = MISSING
+            elif isinstance(value, bool) or not isinstance(value, (int, float)):
+                cells[column] = str(value)
+            else:
+                numeric[column] = None
+                places = 0 if isinstance(value, int) else decimals.get(column, 2)
+                cells[column] = spanish(value, places)
+        formatted.append(cells)
+    return formatted, list(numeric)
+
+
 def duration(seconds: float) -> str:
     """Duración legible: ``4,0 s``, ``1 min 52 s`` o ``92 h 43 min``."""
     if seconds < 60:
-        return f"{seconds:.1f} s".replace(".", ",")
+        return f"{spanish(seconds, 1)} s"
     whole = round(seconds)
     if whole < 3600:
         return f"{whole // 60} min {whole % 60:02d} s"
     return f"{whole // 3600} h {whole % 3600 // 60:02d} min"
+
+
+@dataclass(frozen=True)
+class StageProgress:
+    finished: int
+    total: int | None
+    """``None`` mientras la etapa no tiene plan."""
+
+
+def stage_progress(directory: Path, stage: str) -> StageProgress:
+    """Ejecuciones registradas de una etapa frente a las planificadas.
+
+    Lee ``plan_<etapa>.json`` y cuenta las líneas completas de ``runs_<etapa>.jsonl``; sirve
+    para seguir una calibración que corre en otro proceso.
+    """
+    plan_path = directory / f"plan_{stage}.json"
+    runs_path = directory / f"runs_{stage}.jsonl"
+    finished = 0
+    if runs_path.is_file():
+        finished = runs_path.read_text(encoding="utf-8", errors="replace").count("\n")
+    if not plan_path.is_file():
+        return StageProgress(finished, None)
+    plan = to_mapping(json.loads(plan_path.read_text(encoding="utf-8")), str(plan_path))
+    configs = plan.get("configs")
+    seeds = plan.get("seeds")
+    if not isinstance(configs, list) or not isinstance(seeds, list):
+        raise RecordError(f"{plan_path}: configs and seeds MUST be lists")
+    total = len(configs) * len(seeds)
+    return StageProgress(min(finished, total), total)

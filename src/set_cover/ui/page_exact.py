@@ -8,16 +8,21 @@ from pathlib import Path
 import streamlit
 
 from set_cover.run import RUNNING
-from set_cover.ui import charts
+from set_cover.ui import charts, session
 from set_cover.ui.common import (
     PATHS,
     RESULT_ERRORS,
+    chart,
     current_problem,
+    default_exact_choices,
     exact_run,
-    exact_run_directories,
+    exact_run_choices,
+    options_key,
+    other_exact_runs,
+    show_table,
     solver_jobs,
 )
-from set_cover.ui.data import ExactRun, duration
+from set_cover.ui.data import MISSING, ExactRun, duration, percent, spanish
 from set_cover.ui.solver_jobs import SolverJobError, SolverRequest, read_output, solver_command
 
 _MONITORED_KEY = "solver_monitored_dir"
@@ -25,6 +30,12 @@ _NAME_KEY = "solver_new_name"
 _ROTATE_NAME_KEY = "solver_rotate_name"
 _VALID_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 _NEW = "Nueva ejecución"
+_TRAJECTORY_GUIDE = (
+    "Línea continua: incumbente (costo de la mejor solución hallada). Línea discontinua: "
+    "cota inferior. **Más abajo es mejor** para la incumbente; la cota sube a medida que el "
+    "solver demuestra más. El espacio entre ambas es la brecha: cuanto más juntas, más cerca "
+    "del óptimo demostrado. El eje horizontal es logarítmico: cada marca es 10 veces más tiempo."
+)
 _RESUME = "Reanudar una existente"
 
 
@@ -32,13 +43,23 @@ def render() -> None:
     current_problem()
     streamlit.title("Método exacto (Gurobi)")
     streamlit.markdown(
-        "Branch-and-bound de Gurobi sobre el modelo entero. En cada momento hay una "
-        "**incumbente** (la mejor solución factible encontrada) y una **cota inferior** "
-        "probada: ninguna solución cuesta menos. La **brecha** "
-        "`(incumbente - cota) / incumbente` mide cuánto falta para demostrar optimalidad. "
-        "Cada ejecución guarda un checkpoint en su directorio y se puede reanudar."
+        "Gurobi resuelve el modelo entero con *branch-and-bound*: divide el problema en "
+        "subproblemas y descarta los que no pueden mejorar. Mientras trabaja muestra dos "
+        "números que se van acercando:"
     )
-    launch_tab, results_tab = streamlit.tabs(["Ejecutar", "Ejecuciones"])
+    streamlit.markdown(
+        "- **Incumbente:** la mejor solución completa encontrada hasta ahora. Baja con el "
+        "tiempo.\n"
+        "- **Cota inferior:** un costo que ninguna solución puede mejorar, demostrado "
+        "matemáticamente. Sube con el tiempo.\n"
+        "- **Brecha** = (incumbente - cota) / incumbente: cuánto podría faltar, como máximo, "
+        "para llegar al óptimo. Con brecha 0 la incumbente es **óptima demostrada**."
+    )
+    streamlit.caption(
+        "En esta instancia la brecha baja muy lento: tras 92 horas seguía en 20,69 %. Por eso "
+        "la comparación con el GA usa la mejor cota probada como referencia."
+    )
+    launch_tab, results_tab = streamlit.tabs(["Ejecutar", "Resultados"])
     with launch_tab:
         _launcher()
     with results_tab:
@@ -47,9 +68,7 @@ def render() -> None:
 
 def _launcher() -> None:
     jobs = solver_jobs()
-    resumable = [
-        directory for directory in exact_run_directories() if directory.parent == PATHS.solver_runs
-    ]
+    resumable = other_exact_runs()
     # El nombre por defecto se renueva antes de crear el widget: después ya no se puede cambiar.
     if _NAME_KEY not in streamlit.session_state or streamlit.session_state.get(_ROTATE_NAME_KEY):
         streamlit.session_state[_NAME_KEY] = f"ui-{datetime.now():%Y%m%d-%H%M%S}"
@@ -113,6 +132,7 @@ def _launcher() -> None:
                 else:
                     streamlit.session_state[_MONITORED_KEY] = str(run_dir)
                     streamlit.session_state[_ROTATE_NAME_KEY] = True
+                    session.add_solver_run(run_dir)
 
     monitored = streamlit.session_state.get(_MONITORED_KEY)
     if isinstance(monitored, str):
@@ -150,7 +170,7 @@ def _monitor(run_dir_text: str) -> None:
     if run is not None:
         _metrics(run)
         if run.trajectory:
-            streamlit.plotly_chart(charts.exact_trajectory([run]), key="solver-live-chart")
+            chart(charts.exact_trajectory([run]), "solver-live-chart", _TRAJECTORY_GUIDE)
     with streamlit.expander("Salida del solver", expanded=run is None):
         streamlit.code(read_output(run_dir) or "(sin salida todavía)", language=None)
 
@@ -161,12 +181,13 @@ def _metrics(run: ExactRun) -> None:
     columns = streamlit.columns(4)
     columns[0].metric(
         "Incumbente",
-        "—" if checkpoint.incumbent is None else f"{checkpoint.incumbent.cost:,.0f}",
+        MISSING if checkpoint.incumbent is None else spanish(checkpoint.incumbent.cost),
     )
     columns[1].metric(
-        "Cota inferior", "—" if checkpoint.best_bound is None else f"{checkpoint.best_bound:,.0f}"
+        "Cota inferior",
+        MISSING if checkpoint.best_bound is None else spanish(checkpoint.best_bound),
     )
-    columns[2].metric("Brecha", "—" if gap is None else f"{gap:.2%}")
+    columns[2].metric("Brecha", MISSING if gap is None else percent(gap))
     columns[3].metric("Tiempo acumulado", duration(checkpoint.total_runtime_seconds))
 
 
@@ -197,20 +218,36 @@ def _summary_row(run: ExactRun) -> dict[str, object]:
 
 
 def _results() -> None:
-    directories = exact_run_directories()
-    if not directories:
-        streamlit.info(
-            f"No hay ejecuciones en `{PATHS.saved_solver_runs}` ni en `{PATHS.solver_runs}`."
-        )
+    jobs = solver_jobs()
+    if any(jobs.running(directory) for directory in session.solver_runs()):
+        _live_results()
+    else:
+        _results_body()
+
+
+@streamlit.fragment(run_every=3)
+def _live_results() -> None:
+    """Mientras corre una sesión de esta página, la lista y los gráficos se actualizan solos."""
+    _results_body()
+
+
+def _results_body() -> None:
+    include_other = streamlit.toggle(
+        f"Mostrar también ejecuciones anteriores de `{PATHS.solver_runs}/`",
+        key="exact-include-other",
+        help="Por defecto se ven las guardadas del proyecto y las de esta sesión.",
+    )
+    by_label = exact_run_choices(include_other)
+    if not by_label:
+        streamlit.info("No hay ejecuciones del solver.")
         return
-    by_label = {str(directory): directory for directory in directories}
-    saved = [str(d) for d in directories if d.parent == PATHS.saved_solver_runs]
     chosen = streamlit.multiselect(
         "Ejecuciones a mostrar",
         list(by_label),
-        default=saved or list(by_label)[:1],
-        help=f"Guardadas en `{PATHS.saved_solver_runs}`; las nuevas quedan en "
-        f"`{PATHS.solver_runs}`.",
+        default=default_exact_choices(by_label),
+        key=options_key("exact-chosen", by_label),
+        help=f"«guardada»: resultados del proyecto en `{PATHS.saved_solver_runs}`. "
+        f"«esta sesión»: iniciadas desde esta página. «runs/»: otras en `{PATHS.solver_runs}`.",
     )
     runs: list[ExactRun] = []
     for label in chosen:
@@ -221,19 +258,15 @@ def _results() -> None:
     if not runs:
         return
 
-    streamlit.dataframe(
+    show_table(
         [_summary_row(run) for run in runs],
-        hide_index=True,
-        column_config={
-            "Incumbente": streamlit.column_config.NumberColumn(format="localized"),
-            "Cota inferior": streamlit.column_config.NumberColumn(format="localized"),
-            "Brecha (%)": streamlit.column_config.NumberColumn(format="%.2f"),
-        },
+        {"Incumbente": 0, "Cota inferior": 0, "Brecha (%)": 2},
     )
-    streamlit.plotly_chart(charts.exact_trajectory(runs), key="solver-results-chart")
-    streamlit.caption(
-        "Eje de tiempo logarítmico y acumulado entre sesiones. La cota es el máximo probado hasta "
-        "ese instante: una sesión reanudada no la pierde aunque el log reinicie desde la LP."
+    chart(
+        charts.exact_trajectory(runs),
+        "solver-results-chart",
+        _TRAJECTORY_GUIDE + " El tiempo se acumula entre sesiones: una ejecución reanudada "
+        "continúa donde quedó y conserva su cota.",
     )
 
     detail_label = streamlit.selectbox("Detalle de", [str(run.directory) for run in runs])
@@ -245,18 +278,18 @@ def _results() -> None:
             f"**Antenas de la incumbente ({len(ids)}, base 1):** "
             + ", ".join(str(antenna) for antenna in ids)
         )
-    streamlit.dataframe(
+    show_table(
         [
             {
                 "Inicio": session.started_at,
                 "Fin": session.ended_at,
                 "Estado": session.status,
-                "Tiempo (s)": round(session.runtime_seconds, 1),
+                "Tiempo (s)": session.runtime_seconds,
                 "Nodos": int(session.nodes),
-                "Brecha objetivo": session.target_gap,
+                "Brecha objetivo (%)": 100 * session.target_gap,
                 "Cota de la sesión": session.best_bound,
             }
             for session in detail.checkpoint.sessions
         ],
-        hide_index=True,
+        {"Tiempo (s)": 1, "Brecha objetivo (%)": 2, "Cota de la sesión": 0},
     )

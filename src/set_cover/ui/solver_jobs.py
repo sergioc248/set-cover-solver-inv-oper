@@ -1,9 +1,10 @@
-"""Sesiones del solver exacto lanzadas desde la interfaz, como procesos independientes.
+"""Trabajos largos lanzados desde la interfaz, como procesos independientes.
 
-Cada sesión es ``set-cover solve`` en su propio proceso y grupo de sesión: sobrevive a
-recargas de la página y al cierre del navegador, y conserva el checkpoint y el lock del
-directorio de ejecución. Detenerla envía SIGTERM, que el solver atiende guardando el
-checkpoint antes de salir.
+Las sesiones del solver (``set-cover solve``) y las calibraciones (``set-cover-ga
+calibrate``) corren en su propio proceso y grupo de sesión: sobreviven a recargas de la
+página y al cierre del navegador, y guardan su avance en su directorio. Detener una sesión
+del solver envía SIGTERM, que guarda el checkpoint; detener una calibración envía SIGINT a su
+grupo, que termina las ejecuciones en curso y las registra.
 """
 
 import os
@@ -13,6 +14,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from set_cover.ga.calibration import CalibrationSettings, Stage
 from set_cover.run import is_locked
 
 OUTPUT_NAME = "solver-output.log"
@@ -61,13 +63,67 @@ def solver_command(request: SolverRequest) -> list[str]:
     return command
 
 
+SEARCH_SPACE_NAME = "search_space.json"
+
+
+def calibration_command(
+    directory: Path,
+    settings: CalibrationSettings,
+    coverage: Path,
+    costs: Path,
+    stages: list[Stage],
+) -> list[str]:
+    """``set-cover-ga calibrate`` con ``settings``; lee el espacio de ``SEARCH_SPACE_NAME``."""
+    command = [
+        sys.executable,
+        "-m",
+        "set_cover.ga",
+        "calibrate",
+        "--coverage",
+        str(coverage),
+        "--costs",
+        str(costs),
+        "--output",
+        str(directory),
+        "--search-space",
+        str(directory / SEARCH_SPACE_NAME),
+        "--workers",
+        str(settings.workers),
+        "--budget",
+        str(settings.evaluation_budget),
+        "--explore-configs",
+        str(settings.explore_configs),
+        "--explore-seeds",
+        str(settings.explore_seeds),
+        "--refine-top",
+        str(settings.refine_top),
+        "--refine-neighbors",
+        str(settings.refine_neighbors),
+        "--refine-seeds",
+        str(settings.refine_seeds),
+        "--final-seeds",
+        str(settings.final_seeds),
+        "--similarity",
+        repr(settings.similarity_tolerance),
+        "--sampling-seed",
+        str(settings.sampling_seed),
+    ]
+    for stage in stages:
+        command += ["--stage", stage.value]
+    return command
+
+
 class SolverJobs:
     """Procesos lanzados por este servidor. Una instancia por proceso de Streamlit."""
 
     def __init__(self) -> None:
         self._processes: dict[Path, subprocess.Popen[bytes]] = {}
+        self._stop_signals: dict[Path, signal.Signals] = {}
 
-    def start(self, run_dir: Path, command: list[str]) -> None:
+    def start(
+        self, run_dir: Path, command: list[str], stop_signal: signal.Signals = signal.SIGTERM
+    ) -> None:
+        """Lanza ``command``; ``stop`` le enviará ``stop_signal`` a todo su grupo de procesos."""
         run_dir = run_dir.resolve()
         if self.running(run_dir):
             raise SolverJobError(f"a solver session is already running in {run_dir}")
@@ -85,6 +141,7 @@ class SolverJobs:
             # El hijo heredó su propio descriptor; el del servidor ya no hace falta.
             output.close()
         self._processes[run_dir] = process
+        self._stop_signals[run_dir] = stop_signal
         (run_dir / PID_NAME).write_text(f"{process.pid}\n", encoding="utf-8")
 
     def running(self, run_dir: Path) -> bool:
@@ -101,9 +158,11 @@ class SolverJobs:
 
     def stop(self, run_dir: Path) -> bool:
         """Pide al solver que guarde y termine; retorna si había algo que detener."""
-        process = self._processes.get(run_dir.resolve())
+        resolved = run_dir.resolve()
+        process = self._processes.get(resolved)
         if process is not None and process.poll() is None:
-            process.send_signal(signal.SIGTERM)
+            # El proceso encabeza su propio grupo (start_new_session): su pid es el del grupo.
+            os.killpg(process.pid, self._stop_signals.get(resolved, signal.SIGTERM))
             return True
         # Proceso lanzado por un servidor anterior: solo se detiene si aún tiene el lock.
         pid = _read_pid(run_dir)

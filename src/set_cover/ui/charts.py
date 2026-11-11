@@ -8,10 +8,10 @@ from plotly import graph_objects
 
 from set_cover.compare import MethodResult
 from set_cover.ga.engine import History
-from set_cover.ui.data import Curve, ExactRun, number
+from set_cover.ui.data import Curve, ExactRun, median_series, number, spanish
 
 GA_COLOR = "#2a9d8f"
-GA_LIGHT = "rgba(42, 157, 143, 0.18)"
+GA_COLORS = ("#2a9d8f", "#3a86ff", "#8338ec", "#06a77d", "#118ab2", "#5e548e")
 SOLVER_COLORS = ("#e76f51", "#9c6644", "#f4a261", "#bc4749", "#6a4c93")
 BOUND_COLOR = "#6c757d"
 REFERENCE_COLOR = "#264653"
@@ -25,7 +25,9 @@ def _base(title: str, x_title: str, y_title: str) -> graph_objects.Figure:
         xaxis_title=x_title,
         yaxis_title=y_title,
         margin={"l": 10, "r": 10, "t": 50, "b": 10},
-        legend={"orientation": "h", "yanchor": "bottom", "y": -0.35, "x": 0},
+        # Debajo del título del eje x y creciendo hacia abajo: no lo tapa aunque tenga muchas
+        # entradas.
+        legend={"orientation": "h", "yanchor": "top", "y": -0.3, "x": 0},
         separators=",.",
     )
     return figure
@@ -67,7 +69,21 @@ def exact_trajectory(runs: Sequence[ExactRun]) -> graph_objects.Figure:
         _add_exact_traces(figure, run, SOLVER_COLORS[index % len(SOLVER_COLORS)])
     figure.update_xaxes(type="log")
     figure.update_yaxes(tickformat=_COST_FORMAT)
+    _fit_legend(figure)
     return figure
+
+
+# Con más entradas, una leyenda horizontal ocupa varias filas y tapa el título del eje x.
+_MAX_BOTTOM_LEGEND = 4
+
+
+def _fit_legend(figure: graph_objects.Figure) -> None:
+    """Pasa la leyenda a la derecha, en columna, cuando tiene muchas entradas."""
+    entries = sum(1 for trace in figure.data if trace.showlegend is not False and trace.name)
+    if entries > _MAX_BOTTOM_LEGEND:
+        figure.update_layout(
+            legend={"orientation": "v", "yanchor": "top", "y": 1, "x": 1.02, "xanchor": "left"}
+        )
 
 
 def _add_exact_traces(figure: graph_objects.Figure, run: ExactRun, color: str) -> None:
@@ -142,82 +158,118 @@ def ga_diversity(history: History) -> graph_objects.Figure:
             name="individuos distintos",
         )
     )
+    # Desde cero: una población sin duplicados es una línea plana, no un eje de ±1 individuo.
+    highest = max(history.unique_individuals, default=1)
+    figure.update_yaxes(range=[0, highest * 1.1], rangemode="tozero")
     return figure
 
 
 def quality_vs_time(
-    curves: Sequence[Curve],
-    median: tuple[Sequence[float], Sequence[float | None]] | None,
-    exact_runs: Sequence[ExactRun],
+    groups: Mapping[str, Sequence[Curve]], exact_runs: Sequence[ExactRun]
 ) -> graph_objects.Figure:
-    """Curvas del GA (una por semilla, más la mediana) y trayectorias del solver exacto."""
+    """Curvas del GA por grupo (una por semilla, más la mediana) y trayectorias del solver."""
     figure = _base("Calidad vs tiempo", "Tiempo (s, escala logarítmica)", "Mejor costo")
-    for index, curve in enumerate(curves):
-        figure.add_trace(
-            graph_objects.Scatter(
-                x=curve.seconds,
-                y=curve.best,
-                mode="lines",
-                line={"color": GA_LIGHT, "shape": "hv", "width": 1},
-                name="GA: ejecuciones individuales",
-                legendgroup="ga-runs",
-                showlegend=index == 0,
-                hovertemplate=f"{curve.label}<br>%{{x:,.2f}} s<br>%{{y:,.0f}}<extra></extra>",
+    for index, (name, curves) in enumerate(groups.items()):
+        color = GA_COLORS[index % len(GA_COLORS)]
+        many = len(curves) > 1
+        for position, curve in enumerate(curves):
+            figure.add_trace(
+                graph_objects.Scatter(
+                    x=curve.seconds,
+                    y=curve.best,
+                    mode="lines",
+                    line={
+                        "color": _transparent(color) if many else color,
+                        "shape": "hv",
+                        "width": 1 if many else 2.5,
+                    },
+                    name=f"{name}: cada semilla" if many else name,
+                    legendgroup=f"{name}-runs",
+                    showlegend=position == 0,
+                    hovertemplate=f"{name}<br>{curve.label}<br>%{{x:,.2f}} s<br>%{{y:,.0f}}"
+                    "<extra></extra>",
+                )
             )
-        )
-    if median is not None:
-        grid, values = median
-        figure.add_trace(
-            graph_objects.Scatter(
-                x=list(grid),
-                y=list(values),
-                mode="lines",
-                line={"color": GA_COLOR, "width": 3, "shape": "hv"},
-                name="GA: mediana entre semillas",
-                hovertemplate="%{x:,.2f} s<br>mediana %{y:,.0f}<extra></extra>",
+        if many:
+            grid, values = median_series(curves)
+            figure.add_trace(
+                graph_objects.Scatter(
+                    x=grid,
+                    y=values,
+                    mode="lines",
+                    line={"color": color, "width": 3, "shape": "hv"},
+                    name=f"{name}: mediana",
+                    hovertemplate=f"{name}<br>%{{x:,.2f}} s<br>mediana %{{y:,.0f}}<extra></extra>",
+                )
             )
-        )
     for index, run in enumerate(exact_runs):
         _add_exact_traces(figure, run, SOLVER_COLORS[index % len(SOLVER_COLORS)])
     figure.update_xaxes(type="log")
     figure.update_yaxes(tickformat=_COST_FORMAT)
     figure.update_layout(height=520)
+    _fit_legend(figure)
     return figure
+
+
+def _transparent(color: str, alpha: float = 0.2) -> str:
+    red, green, blue = (int(color[index : index + 2], 16) for index in (1, 3, 5))
+    return f"rgba({red}, {green}, {blue}, {alpha})"
 
 
 def cost_bars(results: Sequence[MethodResult], best_bound: float | None) -> graph_objects.Figure:
-    figure = _base("Costo por método", "", "Costo")
+    """Barras horizontales por método, de la más barata (arriba) a la más cara."""
+    ordered = sorted(results, key=lambda result: result.cost)
+    figure = _base("Costo por método", "Costo", "")
     figure.add_trace(
         graph_objects.Bar(
-            x=[result.method for result in results],
-            y=[result.cost for result in results],
+            y=[result.method for result in ordered],
+            x=[result.cost for result in ordered],
+            orientation="h",
             marker_color=[
                 SOLVER_COLORS[0] if result.best_bound is not None else GA_COLOR
-                for result in results
+                for result in ordered
             ],
-            text=[f"{result.cost:,.0f}" for result in results],
+            text=[spanish(result.cost) for result in ordered],
             textposition="outside",
-            hovertemplate="%{x}<br>%{y:,.0f}<extra></extra>",
+            hovertemplate="%{y}<br>%{x:,.0f}<extra></extra>",
+            showlegend=False,
         )
     )
+    best_known = ordered[0].cost
+    references = [(f"mejor solución conocida: {spanish(best_known)}", best_known, "dot")]
     if best_bound is not None:
-        figure.add_hline(
-            y=best_bound,
-            line={"color": BOUND_COLOR, "dash": "dash"},
-            annotation_text=f"mejor cota inferior probada: {best_bound:,.0f}",
-            annotation_position="bottom right",
+        references.append(
+            (f"mejor cota inferior probada: {spanish(best_bound)}", best_bound, "dash")
         )
-    best_known = min(result.cost for result in results)
-    figure.add_hline(
-        y=best_known,
-        line={"color": REFERENCE_COLOR, "dash": "dot"},
-        annotation_text=f"mejor solución conocida: {best_known:,.0f}",
-        annotation_position="top left",
+    _add_references(
+        figure,
+        [(name, cost, REFERENCE_COLOR, dash) for name, cost, dash in references],
+        vertical=True,
     )
     lowest = min(best_bound if best_bound is not None else best_known, best_known)
-    highest = max(result.cost for result in results)
-    figure.update_yaxes(range=[lowest * 0.95, highest * 1.04], tickformat=_COST_FORMAT)
+    highest = ordered[-1].cost
+    figure.update_xaxes(range=[lowest * 0.95, highest * 1.04], tickformat=_COST_FORMAT)
+    figure.update_yaxes(autorange="reversed")
+    figure.update_layout(height=200 + 34 * len(ordered))
     return figure
+
+
+def _add_references(
+    figure: graph_objects.Figure,
+    references: Sequence[tuple[str, float, str, str]],
+    vertical: bool = False,
+) -> None:
+    """Líneas de referencia con su nombre en la leyenda: una etiqueta sobre el gráfico tapa
+    los datos y se superpone con otras cuando los valores son parecidos."""
+    for name, cost, color, dash in references:
+        line = {"color": color, "dash": dash}
+        if vertical:
+            figure.add_vline(x=cost, line=line)
+        else:
+            figure.add_hline(y=cost, line=line)
+        figure.add_trace(
+            graph_objects.Scatter(x=[None], y=[None], mode="lines", line=line, name=name)
+        )
 
 
 def cost_distribution(
@@ -225,7 +277,8 @@ def cost_distribution(
 ) -> graph_objects.Figure:
     """Distribución de costos del GA por grupo, con los costos del solver como referencias."""
     figure = _base("Distribución de costos del GA", "", "Costo")
-    for name, costs in groups.items():
+    for index, (name, costs) in enumerate(groups.items()):
+        color = GA_COLORS[index % len(GA_COLORS)]
         figure.add_trace(
             graph_objects.Box(
                 y=list(costs),
@@ -233,17 +286,18 @@ def cost_distribution(
                 boxpoints="all",
                 jitter=0.4,
                 pointpos=0,
-                marker={"color": GA_COLOR, "size": 6},
-                line={"color": GA_COLOR},
+                marker={"color": color, "size": 6},
+                line={"color": color},
+                showlegend=False,
             )
         )
-    for index, (name, cost) in enumerate(references.items()):
-        figure.add_hline(
-            y=cost,
-            line={"color": SOLVER_COLORS[index % len(SOLVER_COLORS)], "dash": "dash"},
-            annotation_text=f"{name}: {cost:,.0f}",
-            annotation_position="top right",
-        )
+    _add_references(
+        figure,
+        [
+            (f"{name}: {spanish(cost)}", cost, SOLVER_COLORS[index % len(SOLVER_COLORS)], "dash")
+            for index, (name, cost) in enumerate(references.items())
+        ],
+    )
     figure.update_yaxes(tickformat=_COST_FORMAT)
     return figure
 
@@ -322,7 +376,7 @@ def calibration_boxes(costs: Mapping[str, Sequence[float]], title: str) -> graph
 def parameter_effect(rows: Sequence[Mapping[str, str]], parameter: str) -> graph_objects.Figure:
     """Costo medio y mediano por valor de un parámetro, y fracción que alcanzó el mejor costo."""
     members = [row for row in rows if row["parameter"] == parameter]
-    values = [row["value"] for row in members]
+    values = [_category(row) for row in members]
     figure = _base(f"Efecto de {parameter}", "Valor", "Costo")
     figure.add_trace(
         graph_objects.Bar(
@@ -366,6 +420,8 @@ def parameter_effect(rows: Sequence[Mapping[str, str]], parameter: str) -> graph
             "overlaying": "y",
             "side": "right",
             "range": [0, 100],
+            "dtick": 20,
+            "showgrid": False,
         },
     )
     return figure
@@ -373,3 +429,8 @@ def parameter_effect(rows: Sequence[Mapping[str, str]], parameter: str) -> graph
 
 def _cell(row: Mapping[str, str], key: str) -> float | None:
     return number(row, key)
+
+
+def _category(row: Mapping[str, str]) -> str:
+    value = number(row, "value")
+    return row["value"] if value is None else spanish(value, None)

@@ -1,3 +1,7 @@
 [browser]
 # No enviar estadísticas de uso a Streamlit.
 gatherUsageStats = false
+
+[client]
+# Oculta «Deploy» y las opciones de desarrollo de la barra superior.
+toolbarMode = "viewer"

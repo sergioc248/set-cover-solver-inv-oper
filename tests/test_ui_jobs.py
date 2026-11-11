@@ -1,3 +1,4 @@
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -5,12 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from set_cover.ga.calibration import CalibrationSettings, Stage
 from set_cover.ui.launcher import APP, command
 from set_cover.ui.solver_jobs import (
     PID_NAME,
+    SEARCH_SPACE_NAME,
     SolverJobError,
     SolverJobs,
     SolverRequest,
+    calibration_command,
     read_output,
     solver_command,
 )
@@ -99,3 +103,46 @@ def test_launcher_runs_the_app_with_extra_arguments() -> None:
         "--server.port",
         "8600",
     ]
+
+
+_INTERRUPTIBLE = [
+    sys.executable,
+    "-c",
+    "import sys, time\n"
+    "print('ready', flush=True)\n"
+    "try:\n"
+    "    time.sleep(30)\n"
+    "except KeyboardInterrupt:\n"
+    "    print('saved', flush=True)\n"
+    "    sys.exit(130)\n",
+]
+
+
+def test_stop_sends_the_signal_chosen_at_start(tmp_path: Path) -> None:
+    jobs = SolverJobs()
+    run_dir = tmp_path / "calibration"
+
+    jobs.start(run_dir, _INTERRUPTIBLE, signal.SIGINT)
+    _wait(lambda: "ready" in read_output(run_dir))
+    assert jobs.stop(run_dir)
+    _wait(lambda: not jobs.running(run_dir))
+
+    assert jobs.exit_code(run_dir) == 130
+    assert "saved" in read_output(run_dir)
+
+
+def test_calibration_command_runs_the_ga_cli(tmp_path: Path) -> None:
+    settings = CalibrationSettings(explore_configs=7, refine_seeds=3, workers=2)
+
+    line = calibration_command(
+        tmp_path, settings, Path("c.csv"), Path("k.csv"), [Stage.EXPLORE, Stage.FINAL]
+    )
+
+    assert line[:4] == [sys.executable, "-m", "set_cover.ga", "calibrate"]
+    joined = " ".join(line)
+    assert f"--output {tmp_path}" in joined
+    assert f"--search-space {tmp_path / SEARCH_SPACE_NAME}" in joined
+    assert "--explore-configs 7" in joined
+    assert "--refine-seeds 3" in joined
+    assert "--workers 2" in joined
+    assert "--stage explore --stage final" in joined

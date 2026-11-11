@@ -1,21 +1,24 @@
 """Estado compartido de la interfaz: instancia, cachés de resultados y sesiones del usuario."""
 
 import dataclasses
+import hashlib
 import json
 import sys
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import NoReturn
 
 import streamlit
+from plotly import graph_objects
 
 from set_cover.checkpoint import CheckpointError
 from set_cover.ga.calibration import RunSummary
-from set_cover.ga.engine import GAResult
 from set_cover.ga.jsonio import RecordError, read_json_lines, to_mapping
 from set_cover.ga.problem import CoverProblem, UncoverableError
 from set_cover.instance import Instance, InstanceError, load_instance
 from set_cover.run import checkpoint_path, is_locked
 from set_cover.trajectory import TrajectoryError
+from set_cover.ui import session
 from set_cover.ui.data import (
     LOG_NAME,
     TRAJECTORY_NAME,
@@ -24,6 +27,7 @@ from set_cover.ui.data import (
     GARunRecord,
     Paths,
     discover_exact_runs,
+    display_rows,
     load_exact_run,
     read_convergence,
     read_csv_rows,
@@ -32,7 +36,6 @@ from set_cover.ui.data import (
 from set_cover.ui.solver_jobs import SolverJobs
 
 PATHS = Paths()
-GA_RUNS_KEY = "ga_runs"
 
 # Errores de lectura de archivos de resultados que la interfaz muestra en lugar de fallar.
 RESULT_ERRORS = (
@@ -138,21 +141,65 @@ def exact_run(directory: Path) -> ExactRun:
     return dataclasses.replace(cached, running=is_locked(directory))
 
 
-def exact_run_directories() -> list[Path]:
-    return discover_exact_runs([PATHS.saved_solver_runs, PATHS.solver_runs])
+def saved_exact_runs() -> list[Path]:
+    return discover_exact_runs([PATHS.saved_solver_runs])
 
 
-def session_ga_runs() -> list[GAResult]:
-    """Ejecuciones del GA hechas en esta sesión del navegador, en orden."""
-    stored = streamlit.session_state.get(GA_RUNS_KEY)
-    if not isinstance(stored, list):
-        return []
-    return [run for run in stored if isinstance(run, GAResult)]
+def other_exact_runs() -> list[Path]:
+    """Ejecuciones en ``runs/``: de sesiones anteriores, de esta o lanzadas desde la terminal."""
+    return discover_exact_runs([PATHS.solver_runs])
 
 
-def add_session_ga_run(result: GAResult) -> None:
-    streamlit.session_state[GA_RUNS_KEY] = [*session_ga_runs(), result]
+def exact_run_choices(include_other: bool) -> dict[str, Path]:
+    """Ejecuciones del solver para elegir, con etiquetas que dicen de dónde vienen.
+
+    Siempre las guardadas del proyecto y las de esta sesión; las demás de ``runs/`` solo si
+    ``include_other``.
+    """
+    choices = {f"Gurobi · {path.name} (guardada)": path for path in saved_exact_runs()}
+    mine = [path for path in session.solver_runs() if checkpoint_path(path).is_file()]
+    choices.update({f"Gurobi · {path.name} (esta sesión)": path for path in mine})
+    if include_other:
+        choices.update(
+            {
+                f"Gurobi · {path.name} (runs/)": path
+                for path in other_exact_runs()
+                if path not in mine
+            }
+        )
+    return choices
 
 
-def session_run_label(index: int, result: GAResult) -> str:
-    return f"GA sesión #{index + 1} (semilla {result.seed})"
+def default_exact_choices(labels: Iterable[str]) -> list[str]:
+    """Las guardadas y las de esta sesión."""
+    return [label for label in labels if not label.endswith("(runs/)")]
+
+
+def options_key(prefix: str, options: Iterable[str]) -> str:
+    """Clave de widget que cambia cuando cambian las opciones.
+
+    Streamlit conserva la selección de un widget con clave fija aunque aparezcan opciones
+    nuevas; con esta clave, una ejecución nueva vuelve a aplicar la selección por defecto.
+    """
+    digest = hashlib.sha1("\n".join(options).encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}-{digest}"
+
+
+def chart(figure: graph_objects.Figure, key: str, how_to_read: str) -> None:
+    """Gráfico con su guía de lectura debajo."""
+    streamlit.plotly_chart(figure, key=key)
+    streamlit.caption(f":material/visibility: **Cómo leerlo.** {how_to_read}")
+
+
+def show_table(
+    rows: Sequence[Mapping[str, object]], decimals: Mapping[str, int | None] | None = None
+) -> None:
+    """Tabla con números en formato español, alineados a la derecha, y ``—`` si faltan."""
+    formatted, numeric = display_rows(rows, decimals or {})
+    streamlit.dataframe(
+        formatted,
+        hide_index=True,
+        column_config={
+            column: streamlit.column_config.TextColumn(alignment="right") for column in numeric
+        },
+    )

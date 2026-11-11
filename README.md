@@ -120,6 +120,8 @@ uv run set-cover-ga run --population-size 200 --mutation remove --mutation-rate 
 # Calibración completa (explore, refine, time, final); Ctrl+C y volver a ejecutar reanuda
 uv run set-cover-ga calibrate --workers 6
 uv run set-cover-ga calibrate --stage final
+# Espacio de búsqueda propio: JSON {"parametro": [valores, ...]} con los 10 parámetros
+uv run set-cover-ga calibrate --output runs/mi-calibracion --search-space espacio.json
 
 # Comparación con el solver exacto (lee checkpoints; repetible con ETIQUETA=RUTA)
 uv run set-cover-ga compare --checkpoint "Gurobi 92.7 h=runs/default/checkpoint.json"
@@ -135,17 +137,21 @@ uv run set-cover-ui        # abre http://localhost:8501; ejecútelo desde la ra�
 uv run set-cover-ui --server.port 8600   # los argumentos extra pasan a Streamlit
 ```
 
-Aplicación Streamlit con cinco páginas:
+Aplicación Streamlit con cinco páginas, en el orden de uso:
 
 | Página | Qué permite |
 |---|---|
-| Instancia | Modelo, tamaño, distribución de costos y de cobertura, matriz de cobertura |
-| Método exacto | Lanzar o reanudar una sesión de Gurobi (brecha, tiempo, hilos, semilla) y seguir en vivo la incumbente, la cota y la brecha; detenerla guardando el checkpoint; revisar las ejecuciones guardadas |
-| Algoritmo genético | Ejecutar el GA con cualquier configuración (operador de mutación incluido) y ver su convergencia en vivo; revisar la evaluación final de 30 semillas y las ejecuciones de 30 min |
-| Comparación | Tabla de métricas (la misma de `set-cover-ga compare`), costo por método, calidad vs tiempo, distribución del GA frente a Gurobi y antenas elegidas por cada método; descarga en CSV, JSON o Markdown |
-| Calibración | Resumen de las etapas, ranking por etapa, variabilidad de las mejores configuraciones, efecto de cada parámetro y configuración seleccionada |
+| El problema | Qué se decide, la notación (cliente i, antena j, a_ij, c_j, x_j), el modelo, las cifras de los datos, un explorador de clientes y antenas, y los gráficos de costos y cobertura |
+| Método exacto | Lanzar o reanudar una sesión de Gurobi (brecha, tiempo, hilos, semilla) y seguir en vivo la incumbente, la cota y la brecha; detenerla guardando el checkpoint; revisar las ejecuciones guardadas y las de la sesión |
+| Calibración del GA | Cómo funciona la calibración (diagrama del embudo, qué hace cada etapa y por qué, criterio de selección); explorar la calibración guardada o una propia; calibrar con un espacio de búsqueda propio en segundo plano y llevar la configuración ganadora al GA |
+| Algoritmo genético | Ejecutar uno o más lotes de semillas con cualquier configuración (archivos de `configs/`, calibraciones de la sesión o valores por defecto) con progreso en vivo; resumen del lote (mediana, dispersión, calidad vs tiempo) y detalle de cada ejecución; resultados guardados del proyecto |
+| Comparación | Una sola lista con todo lo comparable: ejecuciones de Gurobi y grupos del GA, guardados o de la sesión. Tabla de métricas (la de `set-cover-ga compare`) con la explicación de cada columna, costo por método, calidad vs tiempo, variabilidad del GA y antenas elegidas; descarga en CSV, JSON o Markdown |
 
-La interfaz lee los resultados de `results/` y los directorios de ejecución de `runs/`. Las sesiones de Gurobi lanzadas desde la interfaz quedan en `runs/<nombre>/` y aparecen en la comparación. Las ejecuciones del GA se guardan en la sesión del navegador y se pueden descargar en JSON. Cada ejecución de Gurobi guardada en `results/ga/comparison/gurobi/<nombre>/` tiene su `checkpoint.json` y su `trajectory.csv` (incumbente y cota en el tiempo, extraídas de `gurobi.log`).
+Cada gráfico tiene debajo una guía «Cómo leerlo» (qué eje mirar y si más alto o más bajo es mejor).
+
+**Sesión.** Lo que se ejecuta desde la interfaz pertenece a la sesión del navegador: lotes del GA, calibraciones y sesiones de Gurobi. La barra lateral los cuenta y el botón **Restablecer sesión** vuelve al estado inicial, con solo los resultados guardados del proyecto; detiene los procesos en curso y no borra archivos.
+
+**Archivos.** La interfaz lee los resultados de `results/`. Las sesiones de Gurobi lanzadas desde la interfaz quedan en `runs/<nombre>/` y las calibraciones en `runs/calibracion-<fecha>/`; ambas corren como procesos aparte (`set-cover solve` y `python -m set_cover.ga calibrate`), así que siguen aunque se cierre la página. Las ejecuciones del GA se guardan solo en la sesión y se pueden descargar. Cada ejecución de Gurobi guardada en `results/ga/comparison/gurobi/<nombre>/` tiene su `checkpoint.json` y su `trajectory.csv` (incumbente y cota en el tiempo, extraídas de `gurobi.log`). Capturas de cada página en `docs/screenshots/`.
 
 ## Desarrollo
 

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -10,19 +11,26 @@ from set_cover.ga.problem import CoverProblem
 from set_cover.trajectory import TrajectoryPoint, write_trajectory
 from set_cover.ui.data import (
     Curve,
+    GAGroup,
     GARunRecord,
+    StageProgress,
     discover_exact_runs,
+    display_rows,
     duration,
     exact_method_result,
-    ga_record_result,
-    ga_session_result,
+    extend_to_run_end,
+    group_results,
     instance_stats,
     jaccard,
     load_exact_run,
     median_curve,
     median_series,
+    percent,
     read_convergence,
     read_ga_records,
+    result_group,
+    spanish,
+    stage_progress,
 )
 from tests.ga_support import real_instance
 
@@ -100,34 +108,45 @@ def _record(seed: int, cost: float, ids: list[int]) -> GARunRecord:
     return GARunRecord(seed, "id", cost, len(ids), ids, 1.0, 10, 1, 0.5, "stall")
 
 
-def test_ga_record_result_picks_the_cheapest_feasible_run() -> None:
+def test_group_reports_its_best_run_and_median() -> None:
     instance = real_instance()
     everything = list(range(1, 501))
-    records = [
-        _record(1, instance.cost_of(everything), everything),
-        _record(2, 10.0, everything),
-    ]
+    group = GAGroup(
+        "GA",
+        (_record(1, 30.0, everything), _record(2, 10.0, everything), _record(3, 20.0, everything)),
+        (),
+    )
 
-    result = ga_record_result(instance, records, "GA")
+    best, median = group_results(instance, group)
 
-    assert result.cost == 10.0
-    assert "semilla 2" in result.note
+    assert (best.method, best.cost, best.antenna_ids) == ("GA · mejor", 10.0, everything)
+    assert "semilla 2" in best.note
+    assert (median.method, median.cost, median.antenna_ids) == ("GA · mediana", 20.0, [])
+    assert group.std_cost == 10.0
+
+
+def test_group_rejects_uncovering_runs_and_empty_groups() -> None:
+    instance = real_instance()
+    everything = list(range(1, 501))
+    group = GAGroup("GA", (_record(1, 10.0, everything), _record(2, 1.0, [1])), ())
     with pytest.raises(RecordError, match="uncovered"):
-        ga_record_result(instance, [_record(3, 1.0, [1])], "GA")
+        group_results(instance, group)
     with pytest.raises(RecordError, match="no runs"):
-        ga_record_result(instance, [], "GA")
+        GAGroup("GA", (), ())
 
 
-def test_ga_session_result_reports_the_run() -> None:
+def test_single_run_group_has_one_row_named_after_the_group() -> None:
     instance = real_instance()
     config = GAConfig(population_size=10, max_generations=2, stall_generations=None)
     result = run_ga(CoverProblem.from_instance(instance), config, 1)
 
-    row = ga_session_result(instance, result, "GA sesión")
+    group = result_group("GA · lote 1", [result])
+    rows = group_results(instance, group)
 
-    assert row.cost == result.evaluation.cost
-    assert row.covered_customers == 500
-    assert row.best_bound is None
+    assert [row.method for row in rows] == ["GA · lote 1"]
+    assert rows[0].cost == result.evaluation.cost
+    assert rows[0].covered_customers == 500
+    assert group.curves[0].best == result.history.best_so_far
 
 
 def test_reads_the_saved_final_evaluation() -> None:
@@ -161,3 +180,59 @@ def test_jaccard_and_duration() -> None:
     assert duration(4.0) == "4,0 s"
     assert duration(112.0) == "1 min 52 s"
     assert duration(333_822.0) == "92 h 43 min"
+
+
+def test_spanish_numbers() -> None:
+    assert spanish(48666.84, 1) == "48.666,8"
+    assert spanish(1516821.0) == "1.516.821"
+    assert spanish(0.03, None) == "0,03"
+    assert spanish(100.0, None) == "100"
+    assert spanish(1000, None) == "1.000"
+    assert percent(0.3999) == "39,99 %"
+
+
+def test_display_rows_format_numbers_and_mark_missing() -> None:
+    rows, numeric = display_rows(
+        [
+            {"Método": "GA", "Costo": 48538.0, "Antenas": 21, "Cota": None, "Exacto": False},
+            {"Método": "Gurobi", "Costo": 50048.0, "Antenas": 22, "Cota": 32345.6, "Exacto": True},
+        ],
+        {"Costo": 0},
+    )
+
+    assert rows[0] == {
+        "Método": "GA",
+        "Costo": "48.538",
+        "Antenas": "21",
+        "Cota": "—",
+        "Exacto": "False",
+    }
+    assert rows[1]["Cota"] == "32.345,60"
+    assert numeric == ["Costo", "Antenas", "Cota"]
+
+
+def test_stage_progress_counts_recorded_runs_against_the_plan(tmp_path: Path) -> None:
+    assert stage_progress(tmp_path, "explore") == StageProgress(0, None)
+
+    plan = {"stage": "explore", "seeds": [1, 2, 3], "configs": [{}, {}]}
+    (tmp_path / "plan_explore.json").write_text(json.dumps(plan), encoding="utf-8")
+    (tmp_path / "runs_explore.jsonl").write_text("{}\n{}\n{", encoding="utf-8")
+
+    assert stage_progress(tmp_path, "explore") == StageProgress(2, 6)
+
+
+def test_curves_extend_to_the_end_of_their_run() -> None:
+    curves = [
+        Curve("semilla 1", [0.5, 849.0], [50_000.0, 48_538.0]),
+        Curve("semilla 2", [1.0], [1.0]),
+    ]
+    everything = list(range(1, 501))
+    records = [_record(1, 48_538.0, everything)]
+    long = GARunRecord(1, "id", 48_538.0, 500, everything, 1800.0, 10, 1, 849.0, "time_limit")
+
+    extended = extend_to_run_end(curves, [long])
+
+    assert extended[0].seconds == [0.5, 849.0, 1800.0]
+    assert extended[0].best == [50_000.0, 48_538.0, 48_538.0]
+    assert extended[1] == curves[1]
+    assert extend_to_run_end(curves, records)[0] == curves[0]
