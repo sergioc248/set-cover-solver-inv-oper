@@ -18,9 +18,9 @@ import multiprocessing
 import os
 import signal
 import statistics
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
@@ -106,6 +106,10 @@ REFINEMENT_GRID: dict[str, tuple[ParameterValue, ...]] = {
 
 _CATEGORICAL = frozenset({"crossover", "mutation", "prune_order"})
 
+type SearchSpace = Mapping[str, Sequence[ParameterValue]]
+# Avance de una etapa: (etapa, ejecuciones terminadas, total de la etapa).
+type TrialProgress = Callable[["Stage", int, int], None]
+
 _BLAS_THREAD_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
 
 _SEED_BASE = {Stage.EXPLORE: 1000, Stage.REFINE: 2000, Stage.TIME: 3000, Stage.FINAL: 9000}
@@ -128,6 +132,7 @@ class CalibrationSettings:
     similarity_tolerance: float = 0.002
     sampling_seed: int = 20261109
     workers: int = 1
+    search_space: SearchSpace = field(default_factory=lambda: SEARCH_SPACE)
 
     def __post_init__(self) -> None:
         seed_counts = {
@@ -149,10 +154,36 @@ class CalibrationSettings:
             raise CalibrationError("time_budget_seconds MUST be positive")
         if not 0.0 <= self.similarity_tolerance < 1.0:
             raise CalibrationError("similarity_tolerance MUST be in [0, 1)")
+        validate_search_space(self.search_space)
+        if self.explore_configs > space_size(self.search_space):
+            raise CalibrationError(
+                f"explore_configs MUST NOT exceed the {space_size(self.search_space)} "
+                "combinations of the search space"
+            )
 
     def base_config(self) -> GAConfig:
         """Criterios de parada comunes a las etapas con presupuesto de evaluaciones."""
         return GAConfig(max_evaluations=self.evaluation_budget, max_generations=None)
+
+
+def settings_record(settings: CalibrationSettings) -> dict[str, object]:
+    """Ajustes para ``settings.json``."""
+    return {
+        "evaluation_budget": settings.evaluation_budget,
+        "explore_configs": settings.explore_configs,
+        "explore_seeds": settings.explore_seeds,
+        "refine_top": settings.refine_top,
+        "refine_neighbors": settings.refine_neighbors,
+        "refine_seeds": settings.refine_seeds,
+        "time_budget_seconds": settings.time_budget_seconds,
+        "time_top": settings.time_top,
+        "time_seeds": settings.time_seeds,
+        "final_seeds": settings.final_seeds,
+        "similarity_tolerance": settings.similarity_tolerance,
+        "sampling_seed": settings.sampling_seed,
+        "workers": settings.workers,
+        "search_space": {name: list(values) for name, values in settings.search_space.items()},
+    }
 
 
 def stage_seeds(stage: Stage, count: int) -> list[int]:
@@ -287,12 +318,75 @@ def rank(summaries: Iterable[ConfigSummary], tolerance: float) -> list[ConfigSum
     return similar + rest + sorted(infeasible, key=lambda summary: summary.median_cost)
 
 
+def validate_search_space(space: SearchSpace) -> None:
+    """Exige los parámetros de ``SEARCH_SPACE``, con valores de ``REFINEMENT_GRID``.
+
+    Así el refinamiento siempre encuentra cada valor en su rejilla.
+    """
+    if set(space) != set(SEARCH_SPACE):
+        raise CalibrationError(f"the search space MUST define exactly {sorted(SEARCH_SPACE)}")
+    for name, values in space.items():
+        if not values:
+            raise CalibrationError(f"{name} MUST have at least one value")
+        if len(set(values)) != len(values):
+            raise CalibrationError(f"{name} has repeated values")
+        outside = [value for value in values if value not in REFINEMENT_GRID[name]]
+        if outside:
+            raise CalibrationError(f"{name}: {outside} are not in the refinement grid")
+
+
+def read_search_space(path: Path) -> dict[str, tuple[ParameterValue, ...]]:
+    """Espacio de búsqueda desde JSON: ``{"parametro": [valor, ...], ...}``."""
+    data = to_mapping(json.loads(path.read_text(encoding="utf-8")), str(path))
+    space: dict[str, tuple[ParameterValue, ...]] = {}
+    for name, raw in data.items():
+        if not isinstance(raw, list):
+            raise CalibrationError(f"{path}: {name} MUST be a list of values")
+        values: list[ParameterValue] = []
+        for value in raw:
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise CalibrationError(f"{path}: {name} has an invalid value {value!r}")
+            values.append(value)
+        space[name] = tuple(values)
+    validate_search_space(space)
+    return space
+
+
+def space_size(space: SearchSpace) -> int:
+    return int(numpy.prod([len(values) for values in space.values()]))
+
+
+def refinement_grid(space: SearchSpace) -> dict[str, tuple[ParameterValue, ...]]:
+    """Rejilla de refinamiento limitada a ``space``.
+
+    Un parámetro categórico solo toma los valores elegidos. Uno numérico toma los valores
+    de ``REFINEMENT_GRID`` entre su mínimo y su máximo elegidos.
+    """
+    validate_search_space(space)
+    grid: dict[str, tuple[ParameterValue, ...]] = {}
+    for name, values in space.items():
+        if name in _CATEGORICAL:
+            grid[name] = tuple(value for value in REFINEMENT_GRID[name] if value in values)
+            continue
+        numbers = [value for value in values if not isinstance(value, str)]
+        low, high = min(numbers), max(numbers)
+        grid[name] = tuple(
+            value
+            for value in REFINEMENT_GRID[name]
+            if not isinstance(value, str) and low <= value <= high
+        )
+    return grid
+
+
 def sample_configurations(
-    base: GAConfig, count: int, rng: numpy.random.Generator
+    base: GAConfig,
+    count: int,
+    rng: numpy.random.Generator,
+    space: SearchSpace = SEARCH_SPACE,
 ) -> list[GAConfig]:
-    """``count`` combinaciones distintas de ``SEARCH_SPACE``, muestreadas sin reemplazo."""
-    names = list(SEARCH_SPACE)
-    sizes = [len(SEARCH_SPACE[name]) for name in names]
+    """``count`` combinaciones distintas de ``space``, muestreadas sin reemplazo."""
+    names = list(space)
+    sizes = [len(space[name]) for name in names]
     total = int(numpy.prod(sizes))
     if count > total:
         raise CalibrationError(f"the search space has only {total} combinations")
@@ -302,16 +396,18 @@ def sample_configurations(
         remainder = int(flat)
         for name, size in zip(names, sizes, strict=True):
             remainder, position = divmod(remainder, size)
-            changes[name] = SEARCH_SPACE[name][position]
+            changes[name] = space[name][position]
         configs.append(base.replace(**changes))
     return configs
 
 
-def neighbors(config: GAConfig) -> list[GAConfig]:
+def neighbors(
+    config: GAConfig, grids: Mapping[str, Sequence[ParameterValue]] = REFINEMENT_GRID
+) -> list[GAConfig]:
     """Configuraciones que cambian un único parámetro a un valor adyacente de la rejilla."""
     current = config.to_dict()
     result: list[GAConfig] = []
-    for name, grid in REFINEMENT_GRID.items():
+    for name, grid in grids.items():
         value = current[name]
         if value not in grid:
             continue
@@ -338,11 +434,18 @@ class Calibration:
         settings: CalibrationSettings,
         output_dir: Path,
         log: Callable[[str], None],
+        on_trial: TrialProgress | None = None,
     ) -> None:
         self.problem = problem
         self.settings = settings
         self.output_dir = output_dir
         self.log = log
+        # Un espacio distinto del original limita también el refinamiento a sus valores.
+        space = settings.search_space
+        self.grids: Mapping[str, Sequence[ParameterValue]] = (
+            REFINEMENT_GRID if space is SEARCH_SPACE else refinement_grid(space)
+        )
+        self.on_trial = on_trial
 
     def run(self, stages: Sequence[Stage]) -> None:
         for stage in stages:
@@ -390,7 +493,9 @@ class Calibration:
         settings = self.settings
         if stage is Stage.EXPLORE:
             rng = numpy.random.default_rng(settings.sampling_seed)
-            configs = sample_configurations(settings.base_config(), settings.explore_configs, rng)
+            configs = sample_configurations(
+                settings.base_config(), settings.explore_configs, rng, settings.search_space
+            )
             seeds = stage_seeds(stage, settings.explore_seeds)
         elif stage is Stage.REFINE:
             configs = self._refinement_configs()
@@ -429,7 +534,11 @@ class Calibration:
         configs = list(top)
         known = {config.config_id() for config in configs}
         for config in top:
-            options = [option for option in neighbors(config) if option.config_id() not in known]
+            options = [
+                option
+                for option in neighbors(config, self.grids)
+                if option.config_id() not in known
+            ]
             if not options:
                 continue
             chosen = rng.choice(
@@ -479,6 +588,8 @@ class Calibration:
         ]
         total = len(plan.trials())
         self.log(f"{len(done)}/{total} runs already recorded, {len(pending)} pending")
+        if self.on_trial is not None:
+            self.on_trial(plan.stage, len(done), total)
         if not pending:
             return
         writer = JsonLinesWriter(self.runs_path(plan.stage))
@@ -510,6 +621,8 @@ class Calibration:
                 f"[{finished}/{total}] {run.config_id} seed {run.seed}: cost {run.best_cost:,.0f} "
                 f"in {run.elapsed_seconds:.1f}s"
             )
+            if self.on_trial is not None:
+                self.on_trial(plan.stage, finished, total)
 
         try:
             for future in as_completed(futures):

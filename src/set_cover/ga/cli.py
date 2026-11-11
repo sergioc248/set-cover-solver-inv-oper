@@ -9,12 +9,15 @@ from set_cover.checkpoint import CheckpointError
 from set_cover.compare import Comparison, ComparisonError, ga_results, read_solver
 from set_cover.ga.benchmark import run_benchmark
 from set_cover.ga.calibration import (
+    SEARCH_SPACE,
     Calibration,
     CalibrationError,
     CalibrationSettings,
     Stage,
     convergence_csv,
     default_workers,
+    read_search_space,
+    settings_record,
 )
 from set_cover.ga.config import ConfigError, CrossoverKind, GAConfig, MutationKind, PruneOrder
 from set_cover.ga.engine import GAResult, GenerationReport, run_ga
@@ -137,6 +140,12 @@ def _parser() -> argparse.ArgumentParser:
     calibrate_parser.add_argument("--time-seeds", type=int, default=defaults.time_seeds)
     calibrate_parser.add_argument("--final-seeds", type=int, default=defaults.final_seeds)
     calibrate_parser.add_argument("--similarity", type=float, default=defaults.similarity_tolerance)
+    calibrate_parser.add_argument(
+        "--search-space",
+        type=Path,
+        help="JSON con la lista de valores a explorar de cada parámetro; por defecto, el "
+        "espacio original",
+    )
     calibrate_parser.add_argument("--sampling-seed", type=int, default=defaults.sampling_seed)
 
     compare_parser = commands.add_parser(
@@ -259,29 +268,14 @@ def _calibrate(args: argparse.Namespace) -> int:
         similarity_tolerance=args.similarity,
         sampling_seed=args.sampling_seed,
         workers=args.workers,
+        search_space=SEARCH_SPACE
+        if args.search_space is None
+        else read_search_space(args.search_space),
     )
     stages = [Stage(value) for value in args.stage] if args.stage else list(Stage)
-    write_json(args.output / "settings.json", _settings_record(settings))
+    write_json(args.output / "settings.json", settings_record(settings))
     Calibration(problem, settings, args.output, _log).run(stages)
     return 0
-
-
-def _settings_record(settings: CalibrationSettings) -> dict[str, object]:
-    return {
-        "evaluation_budget": settings.evaluation_budget,
-        "explore_configs": settings.explore_configs,
-        "explore_seeds": settings.explore_seeds,
-        "refine_top": settings.refine_top,
-        "refine_neighbors": settings.refine_neighbors,
-        "refine_seeds": settings.refine_seeds,
-        "time_budget_seconds": settings.time_budget_seconds,
-        "time_top": settings.time_top,
-        "time_seeds": settings.time_seeds,
-        "final_seeds": settings.final_seeds,
-        "similarity_tolerance": settings.similarity_tolerance,
-        "sampling_seed": settings.sampling_seed,
-        "workers": settings.workers,
-    }
 
 
 def _compare(args: argparse.Namespace) -> int:
